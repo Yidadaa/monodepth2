@@ -8,6 +8,7 @@ from __future__ import absolute_import, division, print_function
 import os
 import hashlib
 import zipfile
+import time
 from six.moves import urllib
 
 
@@ -27,6 +28,11 @@ def normalize_image(x):
     d = ma - mi if ma != mi else 1e5
     return (x - mi) / d
 
+def get_current_date_str():
+    """Get format string of current date and time
+    """
+    time_str = time.strftime('%y_%m_%d-%H:%M:%S')
+    return time_str
 
 def sec_to_hm(t):
     """Convert time in seconds to time in hours, minutes and seconds

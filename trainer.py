@@ -29,7 +29,7 @@ from IPython import embed
 class Trainer:
     def __init__(self, options):
         self.opt = options
-        self.log_path = os.path.join(self.opt.log_dir, self.opt.model_name)
+        self.log_path = os.path.join(self.opt.log_dir, self.opt.model_name + '-' + get_current_date_str())
 
         # checking height and width are multiples of 32
         assert self.opt.height % 32 == 0, "'height' must be a multiple of 32"
