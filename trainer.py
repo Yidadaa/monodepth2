@@ -61,6 +61,14 @@ class Trainer:
         self.models["depth"].to(self.device)
         self.parameters_to_train += list(self.models["depth"].parameters())
 
+        
+        print("Enable attention:\n  ", self.opt.enable_attention)
+        if self.opt.enable_attention:
+            last_channel = self.models["encoder"].num_ch_enc[-1]
+            self.models["attention"] = networks.CoattentionModel(all_channel=last_channel)
+            self.models["attention"].to(self.device)
+            self.parameters_to_train += list(self.models["attention"].parameters())
+
         if self.use_pose_net:
             if self.opt.pose_model_type == "separate_resnet":
                 self.models["pose_encoder"] = networks.ResnetEncoder(
@@ -109,6 +117,7 @@ class Trainer:
         print("Training model named:\n  ", self.opt.model_name)
         print("Models and tensorboard events files are saved to:\n  ", self.opt.log_dir)
         print("Training is using:\n  ", self.device)
+        print("Weights init: \n  ", self.opt.weights_init)
 
         # data
         datasets_dict = {"kitti": datasets.KITTIRAWDataset,
@@ -246,6 +255,10 @@ class Trainer:
         else:
             # Otherwise, we only feed the image with frame_id 0 through the depth encoder
             features = self.models["encoder"](inputs["color_aug", 0, 0])
+            if self.opt.enable_attention:
+                # If attention is enabled, build attention on adjcent frames
+                ref_features = self.models["encoder"](inputs["color_aug", 1, 0])
+                features[-1], _ = self.models["attention"](features[-1], ref_features[-1])
             outputs = self.models["depth"](features)
 
         if self.opt.predictive_mask:
