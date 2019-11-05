@@ -64,7 +64,7 @@ class Trainer:
         
         print("Enable attention:\n  ", self.opt.enable_attention)
         if self.opt.enable_attention:
-            last_channel = self.models["encoder"].num_ch_enc[-1]
+            last_channel = self.models["encoder"].num_ch_enc[-2]
             self.models["attention"] = networks.CoattentionModel(all_channel=last_channel)
             self.models["attention"].to(self.device)
             self.parameters_to_train += list(self.models["attention"].parameters())
@@ -258,7 +258,7 @@ class Trainer:
             if self.opt.enable_attention:
                 # If attention is enabled, build attention on adjcent frames
                 ref_features = self.models["encoder"](inputs["color_aug", 1, 0])
-                features[-1], _ = self.models["attention"](features[-1], ref_features[-1])
+                features[-2], _ = self.models["attention"](features[-2], ref_features[-2])
             outputs = self.models["depth"](features)
 
         if self.opt.predictive_mask:
