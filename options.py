@@ -136,7 +136,7 @@ class MonodepthOptions:
         self.parser.add_argument("--atten_layer",
                                  type=int,
                                  help="which layer to enable attention, set -1 to disable",
-                                 default=4,
+                                 default=-1,
                                  choices=[-1, 0, 1, 2, 3, 4])
 
           

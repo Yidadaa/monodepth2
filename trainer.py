@@ -69,6 +69,8 @@ class Trainer:
             self.models["attention"].to(self.device)
             self.parameters_to_train += list(self.models["attention"].parameters())
 
+        print("Use pose consistency:\n  ", self.opt.use_pose_consistency)
+
         if self.use_pose_net:
             if self.opt.pose_model_type == "separate_resnet":
                 self.models["pose_encoder"] = networks.ResnetEncoder(
@@ -257,9 +259,9 @@ class Trainer:
             features = self.models["encoder"](inputs["color_aug", 0, 0])
             if self.opt.atten_layer > -1:
                 # If attention is enabled, build attention on adjcent frames
-                fe_index = self.opt.atten_layer
+                f_i = self.opt.atten_layer
                 ref_features = self.models["encoder"](inputs["color_aug", 1, 0])
-                features[fe_index], _ = self.models["attention"](features[fe_index], ref_features[fe_index])
+                features[f_i], _ = self.models["attention"](features[f_i], ref_features[f_i])
             outputs = self.models["depth"](features)
 
         if self.opt.predictive_mask:
@@ -287,8 +289,24 @@ class Trainer:
             else:
                 pose_feats = {f_i: inputs["color_aug", f_i, 0] for f_i in self.opt.frame_ids}
 
-            for f_i in self.opt.frame_ids[1:]:
-                if f_i != "s":
+            if self.opt.use_pose_consistency:
+                # To compute pose consistency, we should compute every pose between every two frames
+                seqs = [-1, 0, 1, -1, 1, 0, -1] # TODO: auto change for different frame_ids
+                for s, t in zip(seqs[0:len(seqs) - 1], seqs[1:]):
+                    pose_inputs = torch.cat([pose_feats[s], pose_feats[t]], 1)
+
+                    if self.opt.pose_model_type == "separate_resnet":
+                        pose_inputs = [self.models["pose_encoder"](pose_inputs)]
+                    
+                    axisangle, translation = self.models["pose"](pose_inputs)
+                    outputs[("axisangle", s, t)] = axisangle
+                    outputs[("translation", s, t)] = translation
+                    outputs[("cam_T_cam", s, t)] = transformation_from_parameters(
+                        axisangle[:, 0], translation[:, 0])
+
+            else:
+                for f_i in self.opt.frame_ids[1:]:
+                    if f_i == "s": continue # skip stereo image
                     # To maintain ordering we always pass frames in temporal order
                     if f_i < 0:
                         pose_inputs = [pose_feats[f_i], pose_feats[0]]
@@ -323,11 +341,11 @@ class Trainer:
             axisangle, translation = self.models["pose"](pose_inputs)
 
             for i, f_i in enumerate(self.opt.frame_ids[1:]):
-                if f_i != "s":
-                    outputs[("axisangle", 0, f_i)] = axisangle
-                    outputs[("translation", 0, f_i)] = translation
-                    outputs[("cam_T_cam", 0, f_i)] = transformation_from_parameters(
-                        axisangle[:, i], translation[:, i])
+                if f_i != "s": continue # skip stereo image
+                outputs[("axisangle", 0, f_i)] = axisangle
+                outputs[("translation", 0, f_i)] = translation
+                outputs[("cam_T_cam", 0, f_i)] = transformation_from_parameters(
+                    axisangle[:, i], translation[:, i])
 
         return outputs
 
