@@ -62,9 +62,9 @@ class Trainer:
         self.parameters_to_train += list(self.models["depth"].parameters())
 
         
-        print("Enable attention:\n  ", self.opt.enable_attention)
-        if self.opt.enable_attention:
-            last_channel = self.models["encoder"].num_ch_enc[-2]
+        print("Enable attention layer:\n  ", self.opt.atten_layer)
+        if self.opt.atten_layer > -1:
+            last_channel = self.models["encoder"].num_ch_enc[self.opt.atten_layer]
             self.models["attention"] = networks.CoattentionModel(all_channel=last_channel)
             self.models["attention"].to(self.device)
             self.parameters_to_train += list(self.models["attention"].parameters())
@@ -255,10 +255,11 @@ class Trainer:
         else:
             # Otherwise, we only feed the image with frame_id 0 through the depth encoder
             features = self.models["encoder"](inputs["color_aug", 0, 0])
-            if self.opt.enable_attention:
+            if self.opt.atten_layer > -1:
                 # If attention is enabled, build attention on adjcent frames
+                fe_index = self.opt.atten_layer
                 ref_features = self.models["encoder"](inputs["color_aug", 1, 0])
-                features[-2], _ = self.models["attention"](features[-2], ref_features[-2])
+                features[fe_index], _ = self.models["attention"](features[fe_index], ref_features[fe_index])
             outputs = self.models["depth"](features)
 
         if self.opt.predictive_mask:

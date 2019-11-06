@@ -99,10 +99,10 @@ def evaluate(opt):
         depth_decoder.eval()
 
         # load attention
-        if opt.enable_attention:
+        if opt.atten_layer > -1:
             print("-> Enable attention: true")
             atten_path = os.path.join(opt.load_weights_folder, "attention.pth")
-            attention = networks.CoattentionModel(all_channel=encoder.num_ch_enc[-1])
+            attention = networks.CoattentionModel(all_channel=encoder.num_ch_enc[opt.atten_layer])
             attention.load_state_dict(torch.load(atten_path))
             attention.cuda()
             attention.eval()
@@ -122,11 +122,12 @@ def evaluate(opt):
 
                 input_features = encoder(input_color)
 
-                if opt.enable_attention:
+                if opt.atten_layer > -1:
                     # do attention as same as trainer
+                    fea_index = opt.atten_layer
                     ref_color = data[("color", 1, 0)].cuda()
                     ref_reatures = encoder(ref_color)
-                    input_features[-1], ref_reatures[-1] = attention(input_features[-1], ref_reatures[-1])
+                    input_features[fea_index], ref_reatures[fea_index] = attention(input_features[fea_index], ref_reatures[fea_index])
 
                 output = depth_decoder(input_features)
 
