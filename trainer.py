@@ -523,9 +523,44 @@ class Trainer:
             total_loss += loss
             losses["loss/{}".format(scale)] = loss
 
+        # average scale loss
         total_loss /= self.num_scales
+
+        # compute pose consistency loss
+        f_b_cons_loss, cycle_cons_loss = self.compute_pose_cons_loss(outputs)
+        losses["loss/f_b_cons"], losses["loss/cycle"] = f_b_cons_loss, cycle_cons_loss
+        total_loss += f_b_cons_loss + cycle_cons_loss
+
         losses["loss"] = total_loss
         return losses
+
+    def compute_pose_cons_loss(self, outputs):
+        """Compute pose consistency loss, to optimization
+        """
+        frames = [-1, 0, 1, -1]
+        pairs = zip(frames[:len(frames) - 1], frames[1:])
+
+        # prepare identity matrix
+        identity_matrix = torch.empty(self.opt.batch_size, 4, 4).cuda()
+        identity_matrix[..., :, :] = torch.eye(4).cuda()
+        cons_loss = nn.MSELoss(reduction="sum").cuda()
+
+        f_b_cons_loss = 0 # forward backward loss
+        f_cycle_t = identity_matrix.clone()
+        b_cycle_t = identity_matrix.clone()
+        for s, t in pairs:
+            forward_pose = outputs[("cam_T_cam", s, t)]
+            backward_pose = outputs[("cam_T_cam", t, s)]
+            f_b_cons_loss += cons_loss(forward_pose @ backward_pose, identity_matrix)
+            # compute cycle translation
+            f_cycle_t = f_cycle_t @ forward_pose
+            b_cycle_t = b_cycle_t @ backward_pose
+
+        cycle_cons_loss = 0
+        cycle_cons_loss += cons_loss(f_cycle_t, identity_matrix)
+        cycle_cons_loss += cons_loss(b_cycle_t, identity_matrix)
+
+        return f_b_cons_loss, cycle_cons_loss
 
     def compute_depth_losses(self, inputs, outputs, losses):
         """Compute depth metrics, to allow monitoring during training
