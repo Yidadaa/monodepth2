@@ -61,7 +61,7 @@ class Trainer:
         self.models["depth"].to(self.device)
         self.parameters_to_train += list(self.models["depth"].parameters())
 
-        
+
         print("Enable attention layer:\n  ", self.opt.atten_layer)
         if self.opt.atten_layer > -1:
             last_channel = self.models["encoder"].num_ch_enc[self.opt.atten_layer]
@@ -297,7 +297,7 @@ class Trainer:
 
                     if self.opt.pose_model_type == "separate_resnet":
                         pose_inputs = [self.models["pose_encoder"](pose_inputs)]
-                    
+
                     axisangle, translation = self.models["pose"](pose_inputs)
                     outputs[("axisangle", s, t)] = axisangle
                     outputs[("translation", s, t)] = translation
@@ -526,10 +526,11 @@ class Trainer:
         # average scale loss
         total_loss /= self.num_scales
 
-        # compute pose consistency loss
-        f_b_cons_loss, cycle_cons_loss = self.compute_pose_cons_loss(outputs)
-        losses["loss/f_b_cons"], losses["loss/cycle"] = f_b_cons_loss, cycle_cons_loss
-        total_loss += f_b_cons_loss + cycle_cons_loss
+        if self.opt.use_pose_consistency:
+            # compute pose consistency loss
+            f_b_cons_loss, cycle_cons_loss = self.compute_pose_cons_loss(outputs)
+            losses["loss/f_b_cons"], losses["loss/cycle"] = f_b_cons_loss, cycle_cons_loss
+            total_loss += f_b_cons_loss + cycle_cons_loss
 
         losses["loss"] = total_loss
         return losses
@@ -544,6 +545,7 @@ class Trainer:
         identity_matrix = torch.empty(self.opt.batch_size, 4, 4).cuda()
         identity_matrix[..., :, :] = torch.eye(4).cuda()
         cons_loss = nn.MSELoss(reduction="sum").cuda()
+        # cons_loss = nn.L1Loss(reduction="sum").cuda()
 
         f_b_cons_loss = 0 # forward backward loss
         f_cycle_t = identity_matrix.clone()

@@ -24,6 +24,7 @@ class CoattentionModel(nn.Module):
         )
         self.exemplar_att_classifier = self._build_classifier()
         self.query_att_classifier = self._build_classifier()
+        self.fuse_conv = self._build_classifier()
         
         self.init_weights()
 
@@ -53,7 +54,8 @@ class CoattentionModel(nn.Module):
                                   self._after_attention(query_att, query, fea_size, self.query_att_classifier)
         exemplar_out, query_out = self._before_output(exemplar_att, input_size),\
                                   self._before_output(query_att, input_size)
-        return exemplar_out, query_out  #shape: N, C, 1
+        fuse_out = self.fuse_conv(torch.cat([exemplar_out, query_out], 1))
+        return fuse_out, exemplar_out  #shape: N, C, C
 
 
     def _build_attention(self, exemplar: torch.tensor, query: torch.tensor):
