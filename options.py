@@ -145,6 +145,11 @@ class MonodepthOptions:
                                  help="enable pose consistency loss or not",
                                  default=0)
 
+        self.parser.add_argument("--use_pose_cons_proj",
+                                 type=int,
+                                 help="enable pose consistency loss or not, via reprojection",
+                                 default=0)
+
         # SYSTEM options
         self.parser.add_argument("--no_cuda",
                                  help="if set disables CUDA",

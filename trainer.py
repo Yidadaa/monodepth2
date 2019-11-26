@@ -69,7 +69,8 @@ class Trainer:
             self.models["attention"].to(self.device)
             self.parameters_to_train += list(self.models["attention"].parameters())
 
-        print("Use pose consistency:\n  ", self.opt.use_pose_consistency)
+        print("Use pose consistency:\n  ", "hard" if self.opt.use_pose_consistency\
+                else "proj" if self.opt.use_pose_cons_proj else "None")
 
         if self.use_pose_net:
             if self.opt.pose_model_type == "separate_resnet":
@@ -289,7 +290,7 @@ class Trainer:
             else:
                 pose_feats = {f_i: inputs["color_aug", f_i, 0] for f_i in self.opt.frame_ids}
 
-            if self.opt.use_pose_consistency:
+            if self.opt.use_pose_consistency or self.opt.use_pose_cons_proj:
                 # To compute pose consistency, we should compute every pose between every two frames
                 seqs = [-1, 0, 1, -1, 1, 0, -1] # TODO: auto change for different frame_ids
                 for s, t in zip(seqs[0:len(seqs) - 1], seqs[1:]):
@@ -303,6 +304,8 @@ class Trainer:
                     outputs[("translation", s, t)] = translation
                     outputs[("cam_T_cam", s, t)] = transformation_from_parameters(
                         axisangle[:, 0], translation[:, 0])
+                # add forward backward cons
+                outputs[("cam_T_cam", 0, 0)] = outputs[("cam_T_cam", 0, 1)] @ outputs[("cam_T_cam", 1, 0)]
 
             else:
                 for f_i in self.opt.frame_ids[1:]:
@@ -387,7 +390,12 @@ class Trainer:
 
             outputs[("depth", 0, scale)] = depth
 
-            for i, frame_id in enumerate(self.opt.frame_ids[1:]):
+            # prepare frames
+            frames = self.opt.frame_ids
+            if not self.opt.use_pose_cons_proj:
+                frames = frames[1:]
+
+            for i, frame_id in enumerate(frames):
 
                 if frame_id == "s":
                     T = inputs["stereo_T"]
@@ -442,6 +450,11 @@ class Trainer:
         losses = {}
         total_loss = 0
 
+        # prepare frames
+        frames = self.opt.frame_ids
+        if not self.opt.use_pose_cons_proj:
+            frames = frames[1:]
+
         for scale in self.opt.scales:
             loss = 0
             reprojection_losses = []
@@ -455,7 +468,7 @@ class Trainer:
             color = inputs[("color", 0, scale)]
             target = inputs[("color", 0, source_scale)]
 
-            for frame_id in self.opt.frame_ids[1:]:
+            for frame_id in frames:
                 pred = outputs[("color", frame_id, scale)]
                 reprojection_losses.append(self.compute_reprojection_loss(pred, target))
 
@@ -528,12 +541,21 @@ class Trainer:
 
         if self.opt.use_pose_consistency:
             # compute pose consistency loss
-            f_b_cons_loss, cycle_cons_loss = self.compute_pose_cons_loss(outputs)
+            f_b_cons_loss, cycle_cons_loss = self.compute_pose_cons_loss_axis(outputs)
             losses["loss/f_b_cons"], losses["loss/cycle"] = f_b_cons_loss, cycle_cons_loss
             total_loss += f_b_cons_loss + cycle_cons_loss
 
         losses["loss"] = total_loss
         return losses
+    def compute_pose_cons_loss_axis(self, outputs):
+        fw = outputs[("axisangle", 0, 1)]
+        bw = outputs[("axisangle", 1, 0)]
+        axis_cons = torch.norm(fw + bw, dim=[2]).mean()
+
+        fw_t = outputs[("translation", 0, 1)]
+        bw_t = outputs[("translation", 1, 0)]
+        trans_cons = torch.norm(fw_t + bw_t, dim=[2]).mean()
+        return axis_cons, trans_cons
 
     def compute_pose_cons_loss(self, outputs):
         """Compute pose consistency loss, to optimization

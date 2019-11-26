@@ -23,6 +23,11 @@ data_path=~/DATASET/KITTI/data
 #   --atten_layer -1 --batch_size 2 --use_pose_consistency 1
 
 # train with pretrain and with pose consistency
-CUDA_VISIBLE_DEVICES=1 python train.py --model_name M_att_fuse_4_640x192\
+# CUDA_VISIBLE_DEVICES=1 python train.py --model_name M_att_fuse_4_640x192\
+#    --height 192 --width 640 --data_path $data_path\
+#    --atten_layer 4 --use_pose_consistency 0
+
+# train with pretrain and with pose consistency projection
+CUDA_VISIBLE_DEVICES=2 python train.py --model_name M_pose_fb_ln_640x192\
    --height 192 --width 640 --data_path $data_path\
-   --atten_layer 4 --use_pose_consistency 0
+   --use_pose_cons_proj 0 --use_pose_consistency 1
