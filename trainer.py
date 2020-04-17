@@ -547,15 +547,21 @@ class Trainer:
 
         losses["loss"] = total_loss
         return losses
+
     def compute_pose_cons_loss_axis(self, outputs):
+        w = 0.1
+        eps = 1e-10
+        norm_func = lambda a, b:\
+                (a + b).norm(dim=[-1]) / (eps + a.norm(dim=[-1]) + b.norm(dim=[-1]))
+
         fw = outputs[("axisangle", 0, 1)]
         bw = outputs[("axisangle", 1, 0)]
-        axis_cons = torch.norm(fw + bw, dim=[2]).mean()
+        axis_cons = norm_func(fw, bw).mean()
 
         fw_t = outputs[("translation", 0, 1)]
         bw_t = outputs[("translation", 1, 0)]
-        trans_cons = torch.norm(fw_t + bw_t, dim=[2]).mean()
-        return axis_cons, trans_cons
+        trans_cons = norm_func(fw_t, bw_t).mean()
+        return axis_cons * w, trans_cons * w
 
     def compute_pose_cons_loss(self, outputs):
         """Compute pose consistency loss, to optimization
