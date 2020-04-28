@@ -12,7 +12,7 @@ class GeometricTnfAffine(nn.Module):
 
         Args:
           h, w: height and width of grid
-          scale_factor: scale factor
+          scale_factor: scale factor, default is `1.0`
         '''
         super(GeometricTnfAffine, self).__init__()
 
@@ -31,11 +31,11 @@ class GeometricTnfAffine(nn.Module):
         '''Make transition: P = Theta @ [X, Y, 1].T
 
         Args:
-          images: torch.Tensor with shape (n, 3, h, w)
-          theta: torch.Tensor with shape (n, 3)
+          images: torch.Tensor with shape (n, c, h, w)
+          theta: torch.Tensor with shape (n, 2, 3)
 
         Returns:
-          position: torch.Tensor with shape (n, h, w, 2)
+          transformed_images: torch.Tensor with shape (n, c, h_out, w_out)
         '''
         # make sampling grid
         # shape: (n, 1, 1, 2, 3)
@@ -63,14 +63,18 @@ class CycleTracking(nn.Module):
         self.patch_feature_size = 10
         self.scale = self.image_feature_size // self.patch_feature_size
 
-        self.transition_predictor = nn.Sequential([
+        self.transform_predictor = nn.Sequential([
             nn.Conv2d(self.image_feature_size ** 2, 128,
                       kernel_size=4, padding=0, bias=False),
             nn.LeakyReLU(),
             nn.Conv2d(128, 64, kernel_size=4, padding=0, bias=False),
             nn.LeakyReLU(),
+            nn.Flatten(start_dim=1),
             nn.Linear(64 * 4 * 4, 3)
         ])  # type: nn.Module
+
+        self.GeoSampler = GeometricTnfAffine(self.image_feature_size, self.image_feature_size)
+
 
     def forward(self, image_feats: List[torch.Tensor], patch_feats: torch.Tensor, thetas: torch.Tensor):
         '''Do cycle tracking.
@@ -80,41 +84,62 @@ class CycleTracking(nn.Module):
           patch_feats: the patches from image_feats[0], shape (n, c, h // s, w // s)
           thetas: transofmations from images to patches, shape (n, 2, 3)
         '''
-        image_feats = [torch.unsqueeze(feat, 0) for feat in image_feats]
-        image_feats = torch.cat(image_feats).transpose(
-            0, 1)  # shape: (n, t, c, h, w)
-
+        image_feats = [torch.unsqueeze(feat, 0) for feat in image_feats] # shape: (t, n, c, h, w)
+        image_feats = torch.cat(image_feats).transpose(0, 1).transpose(1, 2)  # shape: (n, c, t, h, w)
         image_feats = F.relu(image_feats)
-        # normalize per image feature map
+
+        # normalize per image feature map along channel dim
         image_feats_norm = F.normalize(image_feats, p=2, dim=1)
 
+        base_img_feats = image_feats[1:]
+        base_img_feats_norm = image_feats_norm[1:]
+
+        target_img_feats = image_feats[0]
+        target_img_feats_norm = image_feats[0]
+
         patch_feats = F.relu(patch_feats)
-        patch_feats_norm = F.normalize(patch_feats, p=2, dim=0)
+        patch_feats_norm = F.normalize(patch_feats, p=2, dim=1)
 
-        correlation_mat = self.compute_correlation_softmax(
-            patch_feats_norm, image_feats_norm[1:])  # shape: (n, t * sh *sw, h, w)
+        # predict the transformation from base images to target patches
+        corr_mat_base_img_to_tgt_patch = self.compute_correlation_patche2images(
+            patch_feats_norm, base_img_feats_norm)  # shape: (n, t * sh *sw, h, w)
+        theta_base_img_to_tgt_patch = self.transform_predictor(corr_mat_base_img_to_tgt_patch) # shape: (n, 3)
+        theta_mat_base_img_to_tgt_patch = self.transform_vector2mat(theta_base_img_to_tgt_patch) # shape: (n, 2, 3)
 
-        theta_pred = self.transition_predictor()
+        # sample predicted patches from base image features, got sampled base patches
+        n, c, t, h, w = base_img_feats.shape
+        base_feats_ori = base_img_feats.transpose(1, 2).view(n * t, c, h, w).contiguous() # shape: (n * t, c, h, w)
+        base_sampled_patch_feats = self.GeoSampler(base_feats_ori, theta_mat_base_img_to_tgt_patch)
 
-    def compute_correlation_softmax(self, query: torch.Tensor, base: torch.Tensor) -> torch.Tensor:
-        '''Compute correlation map between query and base feature maps.
+        # do skip prediction, predict the transformation from target image to sampled base patches
+        corr_mat_tgt_img_to_base_patch = self.compute_correlation_patches2image(
+            base_sampled_patch_feats, target_img_feats_norm) # shape: (n, t * sh * sw, h, w)
+        theta_tgt_img_to_base_patch = self.transform_predictor(corr_mat_tgt_img_to_base_patch) # shape: (n, 3)
+        theta_mat_tgt_img_to_base_patch = self.transform_vector2mat(theta_tgt_img_to_base_patch) # shape: (n, 2, 3)
+
+        # cycle tracking
+        for i in range(1, t + 1):
+          pass
+
+
+    def compute_correlation_patche2images(self, patch: torch.Tensor, images: torch.Tensor) -> torch.Tensor:
+        '''Compute correlation map between patch and images (with time length of `t`) feature maps.
 
         Args:
-          query: patch features, shape: (n, c, h, w)
-          base: image features, shape: (n, t, c, h * s, w * s), `s` denotes scale factor
+          patch: patch features, shape: (n, c, h, w)  
+          images: image features, shape: (n, c, t, h * s, w * s), `s` denotes scale factor  
 
         Returns:
           corr_feat: correlation matrix, shape: (n, t * sh * sw, h, w)
         '''
-        h, w = query.shape[-2:]
-        n, t, c, sh, sw = base.shape
+        h, w = patch.shape[-2:]
+        n, c, t, sh, sw = images.shape
 
-        base_vector = base.transpose(1, 2).view(
-            n, c, -1).transpose(1, 2)  # shape: (n, t * sh * sw, c)
-        query_vector = query.transpose(n, c, -1)  # shape: (n, c, h * w)
+        patch_vector = patch.view(n, c, -1)  # shape: (n, c, h * w)
+        images_vector = images.view(n, c, -1).transpose(1, 2)  # shape: (n, t * sh * sw, c)
 
         # shape: (n, t * sh * sw, h * w)
-        corr_feat = torch.matmul(base_vector, query_vector)
+        corr_feat = torch.matmul(images_vector, patch_vector)
 
         # shape: (n, t, sh * sw, h, w)
         corr_feat = corr_feat.view(n, t, sh * sw, h, w)
@@ -123,8 +148,37 @@ class CycleTracking(nn.Module):
 
         return corr_feat.view(n, t * sh * sw, h, w)
 
+
+    def compute_correlation_patches2image(self, patches: torch.Tensor, image: torch.Tensor) -> torch.Tensor:
+        '''Compute correlation map between patches (with time length of `t`) and image feature maps.
+
+        Args:
+          patches: patch features, shape: (n, c, t, h, w)  
+          image: image features, shape: (n, c, h * s, w * s), `s` denotes scale factor  
+
+        Returns:
+          corr_feat: correlation matrix, shape: (n, t * sh * sw, h, w)
+        '''
+        h, w = patches.shape[-2:]
+        n, c, t, sh, sw = image.shape
+
+        patches_vector = patches.transpose(n, c, -1).transpose(1, 2)  # shape: (n, t * h * w, c)
+        image_vector = image.transpose(2, 3).view(n, c, -1)  # shape: (n, c, sw * sh)
+
+        # shape: (n, t * h * w, sw * sh)
+        corr_feat = torch.matmul(patches_vector, image_vector)
+
+        # shape: (n, t, h * w, sh * sw)
+        corr_feat = corr_feat.view(n, t, h * w, sh * sw)
+        # compute softmax along sh * sw dim
+        corr_feat = F.softmax(corr_feat, dim=3)
+        corr_feat = corr_feat.transpose(2, 3) # shape: (n, t, sh * sw, h * w)
+
+        return corr_feat.view(n, t * sh * sw, h, w)
+
+
     def transform_vector2mat(self, transform_vector: torch.Tensor):
-        '''Convert transform vector (3 * 1) to matrix (2 * 3).
+        '''Convert transform vector (3, ) to matrix (2 * 3).
 
         Args:
           transform_vector: shape: (n, 3)
