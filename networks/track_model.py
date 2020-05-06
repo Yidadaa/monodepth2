@@ -27,8 +27,23 @@ class GeometricTnfAffine(nn.Module):
         self.grid = torch.cat((self.grid, torch.ones(
             h, w, 1)), -1).unsqueeze(-1)  # shape: (h, w, 3, 1)
 
+    def affine_grid(self, theta: torch.Tensor) -> torch.Tensor:
+        '''Make sampling grid.
+
+        Args:
+            theta: torch.Tensor with shape (n, 2, 3)
+
+        Returns:
+            sampling_grid: torch.Tensor with shape (n, h_out, w_out, 2)
+        '''
+        # shape: (n, 1, 1, 2, 3)
+        theta = theta.view((-1, 1, 1, 2, 3)).contiguous()
+        sampling_grid = theta @ self.grid  # shape: (n, h, w, 2, 1)
+        sampling_grid = sampling_grid.squeeze(-1)  # shape: (n, h, w, 2)
+        return sampling_grid
+
     def forward(self, images: torch.Tensor, theta: torch.Tensor) -> torch.Tensor:
-        '''Make transition: P = Theta @ [X, Y, 1].T
+        '''Do transformation: P = Theta @ [X, Y, 1].T
 
         Args:
             images: torch.Tensor with shape (n, c, h, w)
@@ -38,22 +53,12 @@ class GeometricTnfAffine(nn.Module):
             transformed_images: torch.Tensor with shape (n, c, h_out, w_out)
         '''
         # make sampling grid
-        # shape: (n, 1, 1, 2, 3)
-        theta = theta.view((-1, 1, 1, 2, 3)).contiguous()
-        sampling_grid = theta @ self.grid  # shape: (n, h, w, 2, 1)
-        sampling_grid = sampling_grid.squeeze(-1)  # shape: (n, h, w, 2)
+        sampling_grid = self.affine_grid(theta)
 
         # sample transformed images
         transformed_images = F.grid_sample(images, sampling_grid)
 
         return transformed_images
-
-
-class PointTransformation(nn.Module):
-    '''TODO: point transformation, used by GeometricGridLoss
-    '''
-    def __init__(self):
-        super().__init__()
 
 
 class GeometricGridLoss(nn.Module):
@@ -62,16 +67,7 @@ class GeometricGridLoss(nn.Module):
     '''
     def __init__(self, h: int, w: int):
         super(GeometricGridLoss, self).__init__()
-        x_axis_coord = np.linspace(-1, 1, w) # shape: (w, )
-        y_axis_coord = np.linspace(-1, 1, h) # shape: (h, )
-        self.num_pixels = h * w
-        X, Y = np.meshgrid(x_axis_coord, y_axis_coord) # shape: (h, w)
-
-        X = X.reshape((1, 1, self.num_pixels)) # shape: (1, 1, h * w)
-        Y = Y.reshape((1, 1, self.num_pixels)) # shape: (1, 1, h * w)
-        P = np.concatenate((X, Y), 1) # shape: (1, 2, h * w)
-        self.P = torch.FloatTensor(P).cuda()
-        self.TransformPoint = PointTransformation()
+        self.TransformPoint = GeometricTnfAffine(h, w)
 
     def forward(self, theta: torch.Tensor, theta_gt: torch.Tensor):
         '''Compute the loss of L(theta, theta_gt).
@@ -79,11 +75,12 @@ class GeometricGridLoss(nn.Module):
         Args:
             theta: shape: (n, 2, 3)
             theta_gt: shape: (n, 2, 3)
+
+        Returns:
+            loss: mes loss between two transformed grids.
         '''
-        n = theta.shape[0] # type: int
-        P = self.P.expand(n, 2, self.num_pixels) # shape: (n, 2, h * w), grid coordinates
-        sampled_grid = self.TransformPoint(theta, P)
-        sampled_grid_gt = self.TransformPoint(theta_gt, P)
+        sampled_grid = self.TransformPoint.affine_grid(theta) # shape: (n, h, w, 2)
+        sampled_grid_gt = self.TransformPoint.affine_grid(theta_gt) # shape: (n, h, w, 2)
 
         return F.mse_loss(sampled_grid, sampled_grid_gt)
 
