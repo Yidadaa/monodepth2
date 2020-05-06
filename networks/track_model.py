@@ -11,8 +11,8 @@ class GeometricTnfAffine(nn.Module):
         '''Make transformation with affine matrix.
 
         Args:
-          h, w: height and width of grid
-          scale_factor: scale factor, default is `1.0`
+            h, w: height and width of grid
+            scale_factor: scale factor, default is `1.0`
         '''
         super(GeometricTnfAffine, self).__init__()
 
@@ -31,11 +31,11 @@ class GeometricTnfAffine(nn.Module):
         '''Make transition: P = Theta @ [X, Y, 1].T
 
         Args:
-          images: torch.Tensor with shape (n, c, h, w)
-          theta: torch.Tensor with shape (n, 2, 3)
+            images: torch.Tensor with shape (n, c, h, w)
+            theta: torch.Tensor with shape (n, 2, 3)
 
         Returns:
-          transformed_images: torch.Tensor with shape (n, c, h_out, w_out)
+            transformed_images: torch.Tensor with shape (n, c, h_out, w_out)
         '''
         # make sampling grid
         # shape: (n, 1, 1, 2, 3)
@@ -49,12 +49,51 @@ class GeometricTnfAffine(nn.Module):
         return transformed_images
 
 
+class PointTransformation(nn.Module):
+    '''TODO: point transformation, used by GeometricGridLoss
+    '''
+    def __init__(self):
+        super().__init__()
+
+
+class GeometricGridLoss(nn.Module):
+    '''Measure loss on imaginary grid of points.
+    Reference: "Convolutional neural network architecture for geometric matching." Section 4.1.
+    '''
+    def __init__(self, h: int, w: int):
+        super(GeometricGridLoss, self).__init__()
+        x_axis_coord = np.linspace(-1, 1, w) # shape: (w, )
+        y_axis_coord = np.linspace(-1, 1, h) # shape: (h, )
+        self.num_pixels = h * w
+        X, Y = np.meshgrid(x_axis_coord, y_axis_coord) # shape: (h, w)
+
+        X = X.reshape((1, 1, self.num_pixels)) # shape: (1, 1, h * w)
+        Y = Y.reshape((1, 1, self.num_pixels)) # shape: (1, 1, h * w)
+        P = np.concatenate((X, Y), 1) # shape: (1, 2, h * w)
+        self.P = torch.FloatTensor(P).cuda()
+        self.TransformPoint = PointTransformation()
+
+    def forward(self, theta: torch.Tensor, theta_gt: torch.Tensor):
+        '''Compute the loss of L(theta, theta_gt).
+
+        Args:
+            theta: shape: (n, 2, 3)
+            theta_gt: shape: (n, 2, 3)
+        '''
+        n = theta.shape[0] # type: int
+        P = self.P.expand(n, 2, self.num_pixels) # shape: (n, 2, h * w), grid coordinates
+        sampled_grid = self.TransformPoint(theta, P)
+        sampled_grid_gt = self.TransformPoint(theta_gt, P)
+
+        return F.mse_loss(sampled_grid, sampled_grid_gt)
+
+
 class CycleTracking(nn.Module):
     def __init__(self, pretrained: bool = True, temporal_out: int = 4):
         '''Cycle tracking module.
 
         Args:
-          temporal_out: TODO: what's this?
+            temporal_out: the length of temporal sequence
         '''
         super(CycleTracking, self).__init__()
 
@@ -65,7 +104,7 @@ class CycleTracking(nn.Module):
 
         self.transform_predictor = nn.Sequential([
             nn.Conv2d(self.image_feature_size ** 2, 128,
-                      kernel_size=4, padding=0, bias=False),
+                        kernel_size=4, padding=0, bias=False),
             nn.LeakyReLU(),
             nn.Conv2d(128, 64, kernel_size=4, padding=0, bias=False),
             nn.LeakyReLU(),
@@ -81,15 +120,15 @@ class CycleTracking(nn.Module):
         '''Do cycle tracking.
 
         Args:
-          image_feats: list (len == t) of tensors with shape (n, c, h, w), default: t = 3, h = w = 512
-          patch_feats: the patches from image_feats[0], shape (n, c, h // s, w // s)
-          thetas: transofmations from images to patches, shape (n, 2, 3)
+            image_feats: list (len == t) of tensors with shape (n, c, h, w), default: t = 3, h = w = 512
+            patch_feats: the patches from image_feats[0], shape (n, c, h // s, w // s)
+            thetas: transofmations from images to patches, shape (n, 2, 3)
 
         Returns:
-          forward_transform_thetas: shape: (t, n, 2, 3)
-          theta_mat_base_img_to_tgt_patch: shape: (n, 2, 3)
-          theta_mat_tgt_img_to_base_patch: shape: (n, 2, 3)
-          corr_mat_base_img_to_tgt_patch: shape: (n, t * sh *sw, h, w)
+            forward_transform_thetas: shape: (t, n, 2, 3)
+            theta_mat_base_img_to_tgt_patch: shape: (n, 2, 3)
+            theta_mat_tgt_img_to_base_patch: shape: (n, 2, 3)
+            corr_mat_base_img_to_tgt_patch: shape: (n, t * sh *sw, h, w)
         '''
         image_feats = [torch.unsqueeze(feat, 0) for feat in image_feats] # shape: (t, n, c, sh, sw)
         image_feats = torch.cat(image_feats).transpose(0, 1).transpose(1, 2)  # shape: (n, c, t, sh, sw)
@@ -129,29 +168,29 @@ class CycleTracking(nn.Module):
         base_img_transposed = base_img_feats.transpose(1, 2) # shape: (n, t, c, sh, sw)
         
         for i in range(1, t + 1):
-          # cycle, forward and backward
-          # target -> base img 1 -> base img 2 -> ... -> base img i
-          # target <- base img 1 <- base img 2 <- ... <- base img i
-          #         |
-          #    closure_theta
-          forw_transform_thetas, last_forw_patches = \
-              self.recurrent_align(patch_feats_norm, base_img_transposed[:, :i], base_img_feats_norm[:, :, :i])
-          _, last_back_patches = \
-              self.recurrent_align(last_forw_patches, base_img_transposed[:, i - 1:-1:-1], base_img_feats_norm[:, :, i - 1:-1:-1])
-          # 
-          closure_theta, _ = self.track_and_sample(last_back_patches, target_img_feats, target_img_feats_norm)
+            # cycle, forward and backward
+            # target -> base img 1 -> base img 2 -> ... -> base img i
+            # target <- base img 1 <- base img 2 <- ... <- base img i
+            #         |
+            #    closure_theta
+            forw_transform_thetas, last_forw_patches = \
+                self.recurrent_align(patch_feats_norm, base_img_transposed[:, :i], base_img_feats_norm[:, :, :i])
+            _, last_back_patches = \
+                self.recurrent_align(last_forw_patches, base_img_transposed[:, i - 1:-1:-1], base_img_feats_norm[:, :, i - 1:-1:-1])
+            # 
+            closure_theta, _ = self.track_and_sample(last_back_patches, target_img_feats, target_img_feats_norm)
 
-          transform_thetas += [forw_transform_thetas, closure_theta.unsqueeze(dim=0)]
-          # TODO: assure the usage of forw_transform_thetas
+            transform_thetas += [forw_transform_thetas, closure_theta.unsqueeze(dim=0)]
+            # TODO: assure the usage of forw_transform_thetas
 
         forward_transform_thetas = torch.cat(transform_thetas, dim=0) # shape: (t, n, 2, 3)
 
         outputs = (
-          forward_transform_thetas,
-          thetas,
-          theta_mat_base_img_to_tgt_patch,
-          theta_mat_tgt_img_to_base_patch,
-          corr_mat_base_img_to_tgt_patch
+            forward_transform_thetas,
+            thetas,
+            theta_mat_base_img_to_tgt_patch,
+            theta_mat_tgt_img_to_base_patch,
+            corr_mat_base_img_to_tgt_patch
         )
         
         return outputs
@@ -159,42 +198,42 @@ class CycleTracking(nn.Module):
 
     def recurrent_align(self, current_patches: torch.Tensor, middle_imgs: torch.Tensor,
         middle_norm: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-      '''Do recurrent tracking.
+        '''Do recurrent tracking.
 
-      Args:
+        Args:
         current_patches: initial patch to track, shape = (n, c, h, w)
         middle_imgs: `t` images to track through, shape = (n, t, c, sh, sw)
         middle_norm: `F.normalize(middle_imgs, p=2, dim=1)`, shape = (n, c, t, sh, sw)
 
-      Returns:
+        Returns:
         transform_theta: the transformation matrixs between each two frames, frame_i -> patch_i, shape: (t, n, 2, 3)
         last_patches: the last patches sampled from last frame, used to do cycle back tracking, shape: (n, c, h, w)
-      '''
-      n, t = middle_imgs.shape[:2]
-      transform_thetas = torch.zeros(t, n, 2, 3)
+        '''
+        n, t = middle_imgs.shape[:2]
+        transform_thetas = torch.zeros(t, n, 2, 3)
 
-      for i in range(t):
+        for i in range(t):
         current_base_feat = middle_imgs[:, i].squeeze(dim=1) # shape: (n, c, sh, sw)
         current_base_norm = middle_norm[:, :, i] # shape: (n, c, 1, sh, sw)
         current_theta_mat, current_patches = self.track_and_sample(current_patches, current_base_feat, current_base_norm)
         # save each step's transform
         transform_thetas[i] = current_theta_mat
 
-      return transform_thetas, current_patches
+        return transform_thetas, current_patches
 
 
     def track_and_sample(self, patches: torch.Tensor, base_feat: torch.Tensor, \
-          base_norm: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+            base_norm: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         '''Predict the transformation: base frames -> patches.
 
         Args:
-          patches: shape: (n * t, c, h, w), default: `t = 1`
-          base_feat: shape: (n * t, c, sh, sw)
-          base_norm: shape: (n * t, c, sh, sw)
+            patches: shape: (n * t, c, h, w), default: `t = 1`
+            base_feat: shape: (n * t, c, sh, sw)
+            base_norm: shape: (n * t, c, sh, sw)
 
         Returns:
-          theta_mat: transformation matrix, shape: (n * t, 2, 3), default: `t = 1`
-          patches_norm: sampled normalized patches, shpae: (n * t, c, h, w)
+            theta_mat: transformation matrix, shape: (n * t, 2, 3), default: `t = 1`
+            patches_norm: sampled normalized patches, shpae: (n * t, c, h, w)
         '''
         # compute transformation: base feat norm -> current patch
         corr_mat = self.compute_correlation_patche2images(patches, base_norm)
@@ -211,11 +250,11 @@ class CycleTracking(nn.Module):
         '''Compute correlation map between patch and images (with time length of `t`) feature maps.
 
         Args:
-          patch: patch features, shape: (n, c, h, w)  
-          images: image features, shape: (n, c, t, h * s, w * s), `s` denotes scale factor  
+            patch: patch features, shape: (n, c, h, w)  
+            images: image features, shape: (n, c, t, h * s, w * s), `s` denotes scale factor  
 
         Returns:
-          corr_feat: correlation matrix, shape: (n, t * sh * sw, h, w)
+            corr_feat: correlation matrix, shape: (n, t * sh * sw, h, w)
         '''
         h, w = patch.shape[-2:]
         n, c, t, sh, sw = images.shape
@@ -238,11 +277,11 @@ class CycleTracking(nn.Module):
         '''Compute correlation map between patches (with time length of `t`) and image feature maps.
 
         Args:
-          patches: patch features, shape: (n, c, t, h, w)  
-          image: image features, shape: (n, c, h * s, w * s), `s` denotes scale factor  
+            patches: patch features, shape: (n, c, t, h, w)  
+            image: image features, shape: (n, c, h * s, w * s), `s` denotes scale factor  
 
         Returns:
-          corr_feat: correlation matrix, shape: (n, t * sh * sw, h, w)
+            corr_feat: correlation matrix, shape: (n, t * sh * sw, h, w)
         '''
         h, w = patches.shape[-2:]
         n, c, t, sh, sw = image.shape
@@ -266,10 +305,10 @@ class CycleTracking(nn.Module):
         '''Convert transform vector (3, ) to matrix (2 * 3).
 
         Args:
-          transform_vector: shape: (n, 3)
+            transform_vector: shape: (n, 3)
 
         Returns:
-          transform_matrix: shape: (n, 2, 3)
+            transform_matrix: shape: (n, 2, 3)
         '''
         n, s = transform_vector.shape[0],  1 / self.scale
         theta = transform_vector[:, 2]
