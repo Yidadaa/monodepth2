@@ -85,6 +85,14 @@ class GeometricGridLoss(nn.Module):
         return F.mse_loss(sampled_grid, sampled_grid_gt)
 
 
+class WeakInlinerLoss(nn.Module):
+    '''Alignment loss for learning semantic correspondences.
+    Reference:  End-to-end Weakly supervsised semantic alignment.
+    '''
+    def __init__(self): 
+        super(WeakInlinerLoss, self).__init__()
+
+
 class CycleTracking(nn.Module):
     def __init__(self, pretrained: bool = True, temporal_out: int = 4):
         '''Cycle tracking module.
@@ -110,6 +118,8 @@ class CycleTracking(nn.Module):
         ])  # type: nn.Module
 
         self.GeoSampler = GeometricTnfAffine(self.image_feature_size, self.image_feature_size)
+        self.GridLoss = GeometricGridLoss(self.patch_feature_size, self.patch_feature_size)
+        self.WeakInlierLoss = WeakInlinerLoss()
 
 
     def forward(self, image_feats: List[torch.Tensor], patch_feats: torch.Tensor,
@@ -146,8 +156,8 @@ class CycleTracking(nn.Module):
         # predict the transformation from base images to target patches
         corr_mat_base_img_to_tgt_patch = self.compute_correlation_patche2images(
             patch_feats_norm, base_img_feats_norm)  # shape: (n, t * sh *sw, h, w)
-        theta_base_img_to_tgt_patch = self.transform_predictor(corr_mat_base_img_to_tgt_patch) # shape: (n, 3)
-        theta_mat_base_img_to_tgt_patch = self.transform_vector2mat(theta_base_img_to_tgt_patch) # shape: (n, 2, 3)
+        theta_base_img_to_tgt_patch = self.transform_predictor(corr_mat_base_img_to_tgt_patch) # shape: (n * t, 3)
+        theta_mat_base_img_to_tgt_patch = self.transform_vector2mat(theta_base_img_to_tgt_patch) # shape: (n * t, 2, 3)
 
         # sample predicted patches from base image features, got sampled base patches
         n, c, t, sh, sw = base_img_feats.shape
@@ -157,8 +167,8 @@ class CycleTracking(nn.Module):
         # do skip prediction, predict the transformation from target image to sampled base patches
         corr_mat_tgt_img_to_base_patch = self.compute_correlation_patches2image(
             base_sampled_patch_feats, target_img_feats_norm) # shape: (n, t * sh * sw, h, w)
-        theta_tgt_img_to_base_patch = self.transform_predictor(corr_mat_tgt_img_to_base_patch) # shape: (n, 3)
-        theta_mat_tgt_img_to_base_patch = self.transform_vector2mat(theta_tgt_img_to_base_patch) # shape: (n, 2, 3)
+        theta_tgt_img_to_base_patch = self.transform_predictor(corr_mat_tgt_img_to_base_patch) # shape: (n * t, 3)
+        theta_mat_tgt_img_to_base_patch = self.transform_vector2mat(theta_tgt_img_to_base_patch) # shape: (n * t, 2, 3)
 
         # cycle tracking
         transform_thetas = [] # type: List[torch.Tensor], shape: [(t, n, 2, 3)]
@@ -183,14 +193,40 @@ class CycleTracking(nn.Module):
         forward_transform_thetas = torch.cat(transform_thetas, dim=0) # shape: (t, n, 2, 3)
 
         outputs = (
-            forward_transform_thetas,
-            thetas,
-            theta_mat_base_img_to_tgt_patch,
-            theta_mat_tgt_img_to_base_patch,
-            corr_mat_base_img_to_tgt_patch
+            forward_transform_thetas, # shape: (t, n, 2, 3)
+            thetas, # shape: (n, 2, 3)
+            theta_mat_base_img_to_tgt_patch, # shape: (n * t, 2, 3)
+            theta_mat_tgt_img_to_base_patch, # shape: (n * t, 2, 3)
+            corr_mat_base_img_to_tgt_patch # shape: (n, t * sh * sw, h, w)
         )
         
         return outputs
+
+
+    def compute_loss(self,
+        forward_transform_thetas: torch.Tensor,
+        thetas: torch.Tensor,
+        theta_mat_base_img_to_tgt_patch: torch.Tensor,
+        theta_mat_tgt_img_to_base_patch: torch.Tensor,
+        corr_mat_base_img_to_tgt_patch: torch.Tensor) -> torch.Tensor:
+        '''Loss function.
+        '''
+        t, n = forward_transform_thetas.shape[:2]
+
+        # TODO: what's this?
+        indexs = list(range(t))
+        indexs = [j for j in [sum(indexs[:i]) - 1 for i in indexs][2:] if j < t]
+        loss_target_theta = [self.GridLoss(forward_transform_thetas[i], theta) for i in indexs]
+
+        # skip align loss
+        theta_expanded = thetas.unsqueeze(1).repeat(1, t, 1, 1).view(-1, 2, 3) # shape: (n * t, 2, 3)
+        loss_target_skip = self.GridLoss(theta_mat_base_img_to_tgt_patch, thetas)
+
+        # inliner loss
+        loss_inliner = self.WeakInlierLoss(corr_mat_base_img_to_tgt_patch, theta_mat_tgt_img_to_base_patch) # type: torch.Tensor
+        loss_inliner = -loss_inliner.mean()
+
+        return loss_target_theta, loss_target_skip, loss_inliner
 
 
     def recurrent_align(self, current_patches: torch.Tensor, middle_imgs: torch.Tensor,
