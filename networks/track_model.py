@@ -5,6 +5,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
+from scipy.ndimage.morphology import binary_dilation, generate_binary_structure
+
 
 class GeometricTnfAffine(nn.Module):
     def __init__(self, h: int, w: int, scale_factor: float = 1.0):
@@ -89,8 +91,56 @@ class WeakInlinerLoss(nn.Module):
     '''Alignment loss for learning semantic correspondences.
     Reference:  End-to-end Weakly supervsised semantic alignment.
     '''
-    def __init__(self): 
-        super(WeakInlinerLoss, self).__init__()
+    def __init__(self, matches_h: int, matches_w: int): 
+        super(WeakInlinerLoss, self).__init__() 
+        self.matches_h, self.matches_w = matches_h, matches_w
+        self.GeoSampler = GeometricTnfAffine(self.matches_h // 3, self.matches_w // 3) # TODO: refactor this function
+
+        dilation_filter = generate_binary_structure(2, 2)
+        mask_id = np.zeros((self.matches_w, self.matches_h, self.matches_h *  self.matches_w)) # type: np.ndarray
+        index_list = list(range(0, mask_id.size, mask_id.shape[-1] + 1))
+        mask_id.reshape((-1))[index_list] = 1 # identity mask, can view as a (w * h, w * h) identity mask
+        mask_id = mask_id.swapaxes(0, 1) # shape: (h, w, w * h)
+
+        # 2d dilation to every channel
+        for i in range(mask_id.shape[-1]):
+            mask_id[:, :, i] = binary_dilation(mask_id[:, :, i], structure=dilation_filter).astype(mask_id.dtype)
+
+        # convert to tensor
+        self.mask_id = torch.Tensor(mask_id).transpose(1, 2).transpose(0, 1).unsqueeze(0) # shape: (1, w * h, h, w)
+
+    def forward(self, theta: torch.Tensor, matches: torch.Tensor) -> torch.Tensor:
+        '''Compute weakliner loss.
+
+        Args:
+            theta: shape = (n, 2, 3)
+            matches: shape = (n, t * sh * sw, h, w)
+
+        Returns:
+            score: shape = (n, t, c)
+        '''
+        n = theta.size(0)
+        expanded_mask = self.mask_id.expand([n] + self.mask_id.shape[1:]) # shape: (n, w * h, h, w)
+        mask = self.GeoSampler(expanded_mask, theta) # shape: (n, w * h, h * w)
+
+        # normalize
+        eps = 1e-5
+        mask = torch.div(mask,
+            torch.sum(
+                torch.sum(torch.sum(mask + eps, 3), 2), 1
+            ).unsqueeze(1).unsqueeze(2).unsqueeze(3).expand_as(mask)
+        )
+
+        # compute score
+        score = torch.sum(
+            torch.sum(
+                torch.sum(
+                    torch.mul(mask, matches), 3
+                ), 2
+            ), 1
+        )
+
+        return score
 
 
 class CycleTracking(nn.Module):
@@ -246,11 +296,11 @@ class CycleTracking(nn.Module):
         transform_thetas = torch.zeros(t, n, 2, 3)
 
         for i in range(t):
-        current_base_feat = middle_imgs[:, i].squeeze(dim=1) # shape: (n, c, sh, sw)
-        current_base_norm = middle_norm[:, :, i] # shape: (n, c, 1, sh, sw)
-        current_theta_mat, current_patches = self.track_and_sample(current_patches, current_base_feat, current_base_norm)
-        # save each step's transform
-        transform_thetas[i] = current_theta_mat
+            current_base_feat = middle_imgs[:, i].squeeze(dim=1) # shape: (n, c, sh, sw)
+            current_base_norm = middle_norm[:, :, i] # shape: (n, c, 1, sh, sw)
+            current_theta_mat, current_patches = self.track_and_sample(current_patches, current_base_feat, current_base_norm)
+            # save each step's transform
+            transform_thetas[i] = current_theta_mat
 
         return transform_thetas, current_patches
 
