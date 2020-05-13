@@ -91,54 +91,52 @@ class WeakInlinerLoss(nn.Module):
     '''Alignment loss for learning semantic correspondences.
     Reference:  End-to-end Weakly supervsised semantic alignment.
     '''
-    def __init__(self, matches_h: int, matches_w: int): 
+    def __init__(self, matches_h: int, matches_w: int, scale: int): 
+        '''Initialize mask.
+
+        Args:
+            matches_h: height of correlation map
+            matches_w: width of correlation map
+            scale: scale factor of source image to image patches
+        '''
         super(WeakInlinerLoss, self).__init__() 
         self.matches_h, self.matches_w = matches_h, matches_w
-        self.GeoSampler = GeometricTnfAffine(self.matches_h // 3, self.matches_w // 3) # TODO: refactor this function
+        self.scale = scale
+        self.GeoSampler = GeometricTnfAffine(self.matches_h // self.scale, self.matches_w // self.scale) # TODO: refactor this function
 
         dilation_filter = generate_binary_structure(2, 2)
         mask_id = np.zeros((self.matches_w, self.matches_h, self.matches_h *  self.matches_w)) # type: np.ndarray
         index_list = list(range(0, mask_id.size, mask_id.shape[-1] + 1))
-        mask_id.reshape((-1))[index_list] = 1 # identity mask, can view as a (w * h, w * h) identity mask
-        mask_id = mask_id.swapaxes(0, 1) # shape: (h, w, w * h)
+        mask_id.reshape((-1))[index_list] = 1 # identity mask, can view as a (sw * sh, sw * sh) identity mask
+        mask_id = mask_id.swapaxes(0, 1) # shape: (sh, sw, sw * sh)
 
         # 2d dilation to every channel
         for i in range(mask_id.shape[-1]):
+            # dilate the diagonal'width of identity matrix to 5 (1 + 2 * 2)
             mask_id[:, :, i] = binary_dilation(mask_id[:, :, i], structure=dilation_filter).astype(mask_id.dtype)
-
+ 
         # convert to tensor
-        self.mask_id = torch.Tensor(mask_id).transpose(1, 2).transpose(0, 1).unsqueeze(0) # shape: (1, w * h, h, w)
+        self.mask_id = torch.Tensor(mask_id).transpose(1, 2).transpose(0, 1).unsqueeze(0) # shape: (1, sw * sh, sh, sw)
 
     def forward(self, theta: torch.Tensor, matches: torch.Tensor) -> torch.Tensor:
         '''Compute weakliner loss.
 
         Args:
-            theta: shape = (n, 2, 3)
+            theta: shape = (n * t, 2, 3) 
             matches: shape = (n, t * sh * sw, h, w)
 
         Returns:
-            score: shape = (n, t, c)
+            score: shape = (n)
         '''
-        n = theta.size(0)
-        expanded_mask = self.mask_id.expand([n] + self.mask_id.shape[1:]) # shape: (n, w * h, h, w)
-        mask = self.GeoSampler(expanded_mask, theta) # shape: (n, w * h, h * w)
+        nt = theta.size(0)
+        expanded_mask = self.mask_id.expand([nt] + self.mask_id.shape[1:]) # shape: (n * t, sw * sh, sh, sw)
+        mask = self.GeoSampler(expanded_mask, theta) # shape: (n * t, sw * sh, h, w)
 
-        # normalize
-        eps = 1e-5
-        mask = torch.div(mask,
-            torch.sum(
-                torch.sum(torch.sum(mask + eps, 3), 2), 1
-            ).unsqueeze(1).unsqueeze(2).unsqueeze(3).expand_as(mask)
-        )
+        h, w = matches.shape[-2:]
+        matches = matches.view(nt, -1, h, w) # shape: (n * t, sw * sh, h, w)
 
-        # compute score
-        score = torch.sum(
-            torch.sum(
-                torch.sum(
-                    torch.mul(mask, matches), 3
-                ), 2
-            ), 1
-        )
+        # compute score, do element-wise multiplicatoin and sum along dims: [1, 2, 3]
+        score = torch.sum(torch.mul(mask, matches)) / nt # mean on the first dimension
 
         return score
 
@@ -169,7 +167,7 @@ class CycleTracking(nn.Module):
 
         self.GeoSampler = GeometricTnfAffine(self.image_feature_size, self.image_feature_size)
         self.GridLoss = GeometricGridLoss(self.patch_feature_size, self.patch_feature_size)
-        self.WeakInlierLoss = WeakInlinerLoss()
+        self.InlinerLoss = WeakInlinerLoss()
 
 
     def forward(self, image_feats: List[torch.Tensor], patch_feats: torch.Tensor,
@@ -254,11 +252,11 @@ class CycleTracking(nn.Module):
 
 
     def compute_loss(self,
-        forward_transform_thetas: torch.Tensor,
-        thetas: torch.Tensor,
-        theta_mat_base_img_to_tgt_patch: torch.Tensor,
-        theta_mat_tgt_img_to_base_patch: torch.Tensor,
-        corr_mat_base_img_to_tgt_patch: torch.Tensor) -> torch.Tensor:
+            forward_transform_thetas: torch.Tensor,
+            thetas: torch.Tensor,
+            theta_mat_base_img_to_tgt_patch: torch.Tensor,
+            theta_mat_tgt_img_to_base_patch: torch.Tensor,
+            corr_mat_base_img_to_tgt_patch: torch.Tensor) -> torch.Tensor:
         '''Loss function.
         '''
         t, n = forward_transform_thetas.shape[:2]
@@ -273,8 +271,7 @@ class CycleTracking(nn.Module):
         loss_target_skip = self.GridLoss(theta_mat_base_img_to_tgt_patch, thetas)
 
         # inliner loss
-        loss_inliner = self.WeakInlierLoss(corr_mat_base_img_to_tgt_patch, theta_mat_tgt_img_to_base_patch) # type: torch.Tensor
-        loss_inliner = -loss_inliner.mean()
+        loss_inliner = -self.InlinerLoss(corr_mat_base_img_to_tgt_patch, theta_mat_tgt_img_to_base_patch) # type: torch.Tensor
 
         return loss_target_theta, loss_target_skip, loss_inliner
 
