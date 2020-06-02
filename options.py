@@ -149,6 +149,11 @@ class MonodepthOptions:
                                  type=int,
                                  help="enable pose consistency loss or not, via reprojection",
                                  default=0)
+                    
+        self.parser.add_argument("--encode_pos",
+                                 type=int,
+                                 help="encode image postion to raw input",
+                                 default=0)
 
         # SYSTEM options
         self.parser.add_argument("--no_cuda",

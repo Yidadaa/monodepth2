@@ -62,7 +62,7 @@ def resnet_multiimage_input(num_layers, pretrained=False, num_input_images=1):
 class ResnetEncoder(nn.Module):
     """Pytorch module for a resnet encoder
     """
-    def __init__(self, num_layers, pretrained, num_input_images=1):
+    def __init__(self, num_layers, pretrained, num_input_images=1, encode_pos=False):
         super(ResnetEncoder, self).__init__()
 
         self.num_ch_enc = np.array([64, 64, 128, 256, 512])
@@ -84,9 +84,30 @@ class ResnetEncoder(nn.Module):
         if num_layers > 34:
             self.num_ch_enc[1:] *= 4
 
+        self.encode_pos = encode_pos
+        if encode_pos:
+            self.pos_encoder = nn.Conv2d(num_input_images * 3 + 2, num_input_images * 3, kernel_size=1, stride=1)
+            self.pos_mask = None
+
+    def wrap_pos(self, x: torch.Tensor) -> torch.Tensor:
+        '''Concat pos (x, y) to input feature map.'''
+        n, _, h, w = x.shape
+        if not self.pos_mask:
+            # generate position mask
+            self.pos_mask = torch.Tensor(
+                np.meshgrid(np.linspace(0, 1, w), np.linspace(0, 1, h))).to(x.device) # (2, h, w)
+        x = torch.cat((x, self.pos_mask.expand(n, -1, -1, -1)), dim=1) # (n, 3, h, w) -> (n, 5, h, w)
+        return x
+        
+
     def forward(self, input_image):
         self.features = []
         x = (input_image - 0.45) / 0.225
+
+        if self.encode_pos:
+            x = self.wrap_pos(x)
+            x = self.pos_encoder(x)
+
         x = self.encoder.conv1(x)
         x = self.encoder.bn1(x)
         self.features.append(self.encoder.relu(x))
