@@ -92,10 +92,10 @@ class ResnetEncoder(nn.Module):
     def wrap_pos(self, x: torch.Tensor) -> torch.Tensor:
         '''Concat pos (x, y) to input feature map.'''
         n, _, h, w = x.shape
-        if not self.pos_mask:
+        if self.pos_mask is None:
             # generate position mask
             self.pos_mask = torch.Tensor(
-                np.meshgrid(np.linspace(0, 1, w), np.linspace(0, 1, h))).to(x.device) # (2, h, w)
+                np.meshgrid(np.linspace(-1, 1, w), np.linspace(-1, 1, h))).to(x.device) # (2, h, w)
         x = torch.cat((x, self.pos_mask.expand(n, -1, -1, -1)), dim=1) # (n, 3, h, w) -> (n, 5, h, w)
         return x
         

@@ -51,7 +51,7 @@ class Trainer:
         if self.opt.use_stereo:
             self.opt.frame_ids.append("s")
 
-        print("Enable position encoder:\n  ", self.opt.encode_pos)
+        print("Enable position encoder:\n  ", "ON" if self.opt.encode_pos else "OFF")
         self.models["encoder"] = networks.ResnetEncoder(
             self.opt.num_layers, self.opt.weights_init == "pretrained", encode_pos=self.opt.encode_pos)
         self.models["encoder"].to(self.device)

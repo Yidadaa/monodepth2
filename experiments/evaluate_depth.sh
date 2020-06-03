@@ -1,0 +1,1 @@
+CUDA_VISIBLE_DEVICES=1 python evaluate_depth.py --load_weights_folder ~/tmp/M_att_fuse_4_640x192-19_11_07-21:41:46/models/weights_16 --eval_mono --data_path ~/DATASET/KITTI/data --atten_layer 4
