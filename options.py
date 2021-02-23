@@ -132,14 +132,14 @@ class MonodepthOptions:
                                  help="normal or shared",
                                  default="separate_resnet",
                                  choices=["posecnn", "separate_resnet", "shared"])
-          
+
         self.parser.add_argument("--atten_layer",
                                  type=int,
                                  help="which layer to enable attention, set -1 to disable",
                                  default=-1,
                                  choices=[-1, 0, 1, 2, 3, 4])
 
-          
+
         self.parser.add_argument("--use_pose_consistency",
                                  type=int,
                                  help="enable pose consistency loss or not",
@@ -149,7 +149,7 @@ class MonodepthOptions:
                                  type=int,
                                  help="enable pose consistency loss or not, via reprojection",
                                  default=0)
-                    
+
         self.parser.add_argument("--encode_pos",
                                  type=int,
                                  help="encode image postion to raw input",

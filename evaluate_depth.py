@@ -86,7 +86,7 @@ def evaluate(opt):
         dataloader = DataLoader(dataset, 16, shuffle=False, num_workers=opt.num_workers,
                                 pin_memory=True, drop_last=False)
 
-        print("->  Encode position: ", "ON" if opt.encode_pos else "OFF")
+        print("-> Encode position: ", "ON" if opt.encode_pos else "OFF")
         encoder = networks.ResnetEncoder(opt.num_layers, False, encode_pos=opt.encode_pos)
         depth_decoder = networks.DepthDecoder(encoder.num_ch_enc)
 
@@ -99,7 +99,7 @@ def evaluate(opt):
         depth_decoder.cuda()
         depth_decoder.eval()
 
-        print("->  Encode attention: ", "ON" if opt.encode_pos >= 0 else "OFF")
+        print("-> Encode attention: ", "ON" if opt.atten_layer > -1 else "OFF")
         # load attention
         if opt.atten_layer > -1:
             atten_path = os.path.join(opt.load_weights_folder, "attention.pth")

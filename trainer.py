@@ -254,6 +254,7 @@ class Trainer:
             features = {}
             for i, k in enumerate(self.opt.frame_ids):
                 features[k] = [f[i] for f in all_features]
+            # TODO: add more depth to output add enable loss on them
 
             outputs = self.models["depth"](features[0])
         else:

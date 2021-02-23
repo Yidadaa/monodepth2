@@ -1,7 +1,7 @@
 data_path=~/DATASET/KITTI/data
 
 # train with pretrained model
-# CUDA_VISIBLE_DEVICES=3 python train.py --model_name M_640x192\
+# CUDA_VISIBLE_DEVICES=1 python train.py --model_name M_pt_raw_640x192\
 #   --height 192 --width 640 --data_path $data_path
 
 # train w/o pretrain
@@ -33,7 +33,13 @@ data_path=~/DATASET/KITTI/data
 #    --use_pose_cons_proj 0 --use_pose_consistency 1
 
 # train with pretrain and with encode_pos
-CUDA_VISIBLE_DEVICES=1 python train.py --model_name M_pose_position_center_offet_640x192\
-   --height 192 --width 640 --data_path $data_path\
-   --use_pose_cons_proj 0 --use_pose_consistency 0\
-   --encode_pos 1
+# CUDA_VISIBLE_DEVICES=1 python train.py --model_name M_pose_position_center_offet_640x192\
+#   --height 192 --width 640 --data_path $data_path\
+#   --use_pose_cons_proj 0 --use_pose_consistency 0\
+#   --encode_pos 1
+
+# train with pretrained model disable auto mask
+CUDA_VISIBLE_DEVICES=1 python train.py --model_name M_pt_disable_automask_640x192\
+  --height 192 --width 640 --data_path $data_path --disable_automasking
+
+
