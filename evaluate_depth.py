@@ -82,7 +82,7 @@ def evaluate(opt):
 
         dataset = datasets.KITTIRAWDataset(opt.data_path, filenames,
                                            encoder_dict['height'], encoder_dict['width'],
-                                           [0], 4, is_train=False)
+                                           [0, 1], 4, is_train=False)
         dataloader = DataLoader(dataset, 16, shuffle=False, num_workers=opt.num_workers,
                                 pin_memory=True, drop_last=False)
 
@@ -98,6 +98,15 @@ def evaluate(opt):
         depth_decoder.cuda()
         depth_decoder.eval()
 
+        # load attention
+        if opt.enable_attention:
+            print("-> Enable attention: true")
+            atten_path = os.path.join(opt.load_weights_folder, "attention.pth")
+            attention = networks.CoattentionModel(all_channel=encoder.num_ch_enc[-1])
+            attention.load_state_dict(torch.load(atten_path))
+            attention.cuda()
+            attention.eval()
+
         pred_disps = []
 
         print("-> Computing predictions with size {}x{}".format(
@@ -111,7 +120,15 @@ def evaluate(opt):
                     # Post-processed results require each image to have two forward passes
                     input_color = torch.cat((input_color, torch.flip(input_color, [3])), 0)
 
-                output = depth_decoder(encoder(input_color))
+                input_features = encoder(input_color)
+
+                if opt.enable_attention:
+                    # do attention as same as trainer
+                    ref_color = data[("color", 1, 0)].cuda()
+                    ref_reatures = encoder(ref_color)
+                    input_features[-1], ref_reatures[-1] = attention(input_features[-1], ref_reatures[-1])
+
+                output = depth_decoder(input_features)
 
                 pred_disp, _ = disp_to_depth(output[("disp", 0)], opt.min_depth, opt.max_depth)
                 pred_disp = pred_disp.cpu()[:, 0].numpy()
