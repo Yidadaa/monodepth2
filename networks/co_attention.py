@@ -49,8 +49,8 @@ class CoattentionModel(nn.Module):
         input_size, fea_size = exemplar.size()[2:], query.size()[2:]
 
         exemplar_att, query_att = self._build_attention(exemplar, query)
-        exemplar_att, query_att = self._after_attention(exemplar_att, exemplar, fea_size, self.exemplar_att_classifier),\
-                                  self._after_attention(query_att, query, fea_size, self.query_att_classifier)
+        exemplar_att, exemplar_att_gated = self._after_attention(exemplar_att, exemplar, fea_size, self.exemplar_att_classifier)
+        query_att, query_att_gated = self._after_attention(query_att, query, fea_size, self.query_att_classifier)
         exemplar_out, query_out = self._before_output(exemplar_att, input_size),\
                                   self._before_output(query_att, input_size)
         return exemplar_out, query_out  #shape: N, C, 1
@@ -79,7 +79,7 @@ class CoattentionModel(nn.Module):
         mask = self.gate(in_feature)
         in_feature = in_feature * mask
         feature_cat = torch.cat([in_feature, src_feature], 1)
-        return classfier(feature_cat)
+        return classfier(feature_cat), mask
 
 
     def _before_output(self, in_feature: torch.tensor, output_size: tuple):

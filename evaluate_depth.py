@@ -23,6 +23,24 @@ splits_dir = os.path.join(os.path.dirname(__file__), "splits")
 # to convert our stereo predictions to real-world scale we multiply our depths by 5.4.
 STEREO_SCALE_FACTOR = 5.4
 
+def check_path(path):
+    """Make path if path does not exist"""
+    if not os.path.exists(path):
+        os.mkdir(path)
+
+def save_pred_data(data, opt):
+    """Save predicted disparity map, attention map and source images."""
+
+    output_path = os.path.join(
+        opt.load_weights_folder, "{}".format(opt.eval_split))
+    check_path(output_path)
+    print("-> Saving predicted data to ", output_path)
+    for key in data:
+        sub_path = os.path.join(output_path, '{}'.format(key))
+        check_path(sub_path)
+        for i in range(len(data[key])):
+            out_file_path = os.path.join(sub_path, '{}.npy'.format(i))
+            np.save(out_file_path, data[key][i])
 
 def compute_errors(gt, pred):
     """Computation of error metrics between predicted and ground truth depths
@@ -109,12 +127,21 @@ def evaluate(opt):
 
         pred_disps = []
 
+        pred_data = {
+            'image': [],
+            'ref_image': [],
+            'atten': [],
+            'ref_atten': []
+        }
+
         print("-> Computing predictions with size {}x{}".format(
             encoder_dict['width'], encoder_dict['height']))
 
         with torch.no_grad():
             for data in dataloader:
                 input_color = data[("color", 0, 0)].cuda()
+                pred_data['image'].append(data[("color", 0, 0)].numpy())
+                pred_data['ref_image'].append(data[("color", 1, 0)].numpy())
 
                 if opt.post_process:
                     # Post-processed results require each image to have two forward passes
@@ -127,6 +154,8 @@ def evaluate(opt):
                     ref_color = data[("color", 1, 0)].cuda()
                     ref_reatures = encoder(ref_color)
                     input_features[-1], ref_reatures[-1] = attention(input_features[-1], ref_reatures[-1])
+                    pred_data['atten'].append(input_features[-1].cpu().numpy())
+                    pred_data['ref_atten'].append(ref_reatures[-1].cpu().numpy())
 
                 output = depth_decoder(input_features)
 
@@ -153,8 +182,9 @@ def evaluate(opt):
             pred_disps = pred_disps[eigen_to_benchmark_ids]
 
     if opt.save_pred_disps:
+        save_pred_data(pred_data, opt)
         output_path = os.path.join(
-            opt.load_weights_folder, "disps_{}_split.npy".format(opt.eval_split))
+            opt.load_weights_folder, opt.eval_split, "disps_{}_split.npy".format(opt.eval_split))
         print("-> Saving predicted disparities to ", output_path)
         np.save(output_path, pred_disps)
 
