@@ -131,7 +131,8 @@ def evaluate(opt):
             'image': [],
             'ref_image': [],
             'atten': [],
-            'ref_atten': []
+            'ref_atten': [],
+            'disp': []
         }
 
         print("-> Computing predictions with size {}x{}".format(
@@ -153,9 +154,9 @@ def evaluate(opt):
                     # do attention as same as trainer
                     ref_color = data[("color", 1, 0)].cuda()
                     ref_reatures = encoder(ref_color)
-                    input_features[-1], ref_reatures[-1] = attention(input_features[-1], ref_reatures[-1])
-                    pred_data['atten'].append(input_features[-1].cpu().numpy())
-                    pred_data['ref_atten'].append(ref_reatures[-1].cpu().numpy())
+                    input_features[-1], ref_reatures[-1], in_atten_gated, ref_atten_gated = attention(input_features[-1], input_features[-1])
+                    pred_data['atten'].append(in_atten_gated.cpu().numpy())
+                    pred_data['ref_atten'].append(ref_atten_gated.cpu().numpy())
 
                 output = depth_decoder(input_features)
 
@@ -167,6 +168,7 @@ def evaluate(opt):
                     pred_disp = batch_post_process_disparity(pred_disp[:N], pred_disp[N:, :, ::-1])
 
                 pred_disps.append(pred_disp)
+                pred_data['disp'].append(pred_disp)
 
         pred_disps = np.concatenate(pred_disps)
 

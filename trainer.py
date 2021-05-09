@@ -258,7 +258,7 @@ class Trainer:
             if self.opt.enable_attention:
                 # If attention is enabled, build attention on adjcent frames
                 ref_features = self.models["encoder"](inputs["color_aug", 1, 0])
-                features[-1], _ = self.models["attention"](features[-1], ref_features[-1])
+                features[-1], _, __, ___ = self.models["attention"](features[-1], features[-1])
             outputs = self.models["depth"](features)
 
         if self.opt.predictive_mask:
